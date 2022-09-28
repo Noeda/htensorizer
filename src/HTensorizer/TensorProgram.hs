@@ -113,6 +113,12 @@ nicePrint prg = execWriter $ go prg
       tell ") <- ("
       tellTensor tensor2
       tell ")\n"
+    go (MultiplyToTensor tensor1 tensor2) = do
+      tell "mult ("
+      tellTensor tensor1
+      tell ") <- ("
+      tellTensor tensor2
+      tell ")\n"
     go (MakeTensorConstant tensor constant) = do
       tell "("
       tellTensor tensor
@@ -167,6 +173,7 @@ tensorProgramWrites :: TensorProgram -> S.Set TensorLocation
 tensorProgramWrites Nop = S.empty
 tensorProgramWrites (Dupe tgt _) = S.singleton (tensorLocation tgt)
 tensorProgramWrites (AddToTensor tgt _) = S.singleton (tensorLocation tgt)
+tensorProgramWrites (MultiplyToTensor tgt _) = S.singleton (tensorLocation tgt)
 tensorProgramWrites (Seq r1 r2) = S.union (tensorProgramWrites r1) (tensorProgramWrites r2)
 tensorProgramWrites (MakeTensorUninit tens) = S.singleton (tensorLocation tens)
 tensorProgramWrites (MakeTensorConstant tens _) = S.singleton (tensorLocation tens)
@@ -178,6 +185,7 @@ tensorProgramReads Nop = S.empty
 tensorProgramReads (Return tens) = S.singleton (tensorLocation tens)
 tensorProgramReads (Dupe _ src) = S.singleton (tensorLocation src)
 tensorProgramReads (AddToTensor tgt src) = S.fromList [tensorLocation src, tensorLocation tgt]
+tensorProgramReads (MultiplyToTensor tgt src) = S.fromList [tensorLocation src, tensorLocation tgt]
 tensorProgramReads (Seq r1 r2) = S.union (tensorProgramReads r1) (tensorProgramReads r2)
 tensorProgramReads (MakeTensorUninit _) = S.empty
 tensorProgramReads (MakeTensorConstant _ _) = S.empty
@@ -200,6 +208,7 @@ traverseTensorLocations (Dupe tgt src) action =
 traverseTensorLocations (MakeTensorConstant tens cons) action = MakeTensorConstant <$> traverseTensorLocation tens action <*> pure cons
 traverseTensorLocations (MakeTensorUninit tens) action = MakeTensorUninit <$> traverseTensorLocation tens action
 traverseTensorLocations (AddToTensor tgt src) action = AddToTensor <$> traverseTensorLocation tgt action <*> traverseTensorLocation src action
+traverseTensorLocations (MultiplyToTensor tgt src) action = MultiplyToTensor <$> traverseTensorLocation tgt action <*> traverseTensorLocation src action
 traverseTensorLocations (Seq r1 r2) action = Seq <$> traverseTensorLocations r1 action <*> traverseTensorLocations r2 action
 traverseTensorLocations (Return tens) action = Return <$> traverseTensorLocation tens action
 
@@ -260,6 +269,8 @@ validCheck prg = execState go emptyValidCheckResult
             typeCheckCreateTensor piece tgt
             typeCheckBinOpTensor piece tgt src
           AddToTensor tgt src ->
+            typeCheckBinOpTensor piece tgt src
+          MultiplyToTensor tgt src ->
             typeCheckBinOpTensor piece tgt src
           Return src ->
             typeCheckReturnTensor piece src

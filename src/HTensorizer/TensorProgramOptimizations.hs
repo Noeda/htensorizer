@@ -71,6 +71,15 @@ constantFold prg =
             put $ M.delete (tensorLocation tgt) constants
             return piece
           _ -> return piece
+        MultiplyToTensor tgt src -> case (M.lookup (tensorLocation tgt) constants, M.lookup (tensorLocation src) constants) of
+          (Just tgt_cons, Just src_cons) -> do
+            let multed = float2Double $ double2Float tgt_cons * double2Float src_cons
+            put $ M.insert (tensorLocation tgt) multed constants
+            return $ MakeTensorConstant tgt multed
+          (Just _, Nothing) -> do
+            put $ M.delete (tensorLocation tgt) constants
+            return piece
+          _ -> return piece
         piece -> do
           let writes = tensorProgramWrites piece
           for_ writes $ \writes ->

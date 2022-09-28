@@ -126,7 +126,7 @@ instance Arbitrary TensorProgram where
       for_ instructions $ \() -> do
         -- TODO: should we care about modulo bias? I am too lazy to care
         instruction_op_ <- arbw32
-        let instruction_op = instruction_op_ `mod` 4
+        let instruction_op = instruction_op_ `mod` 5
         src_tensor_idx <- arbw32
 
         case instruction_op of
@@ -160,6 +160,13 @@ instance Arbitrary TensorProgram where
                 createIfNotCreated tgt_tensor
                 createIfNotCreated src_tensor
                 emitInstruction $ AddToTensor tgt_tensor src_tensor
+          4 -> do
+            -- multiply-to-tensor
+            whenNotEmpty $ do
+              tryFindCompatibleTensors $ \tgt_tensor src_tensor -> do
+                createIfNotCreated tgt_tensor
+                createIfNotCreated src_tensor
+                emitInstruction $ MultiplyToTensor tgt_tensor src_tensor
           _ -> error "impossible"
 
       -- Return rensor

@@ -76,6 +76,7 @@ data TensorProgram
   | MakeTensorUninit !Tensor
   | Dupe !Tensor !Tensor
   | AddToTensor !Tensor !Tensor
+  | MultiplyToTensor !Tensor !Tensor
   | Seq TensorProgram TensorProgram
   | Return !Tensor
   | Nop

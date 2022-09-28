@@ -69,6 +69,19 @@ run program =
                     )
                     (tensors old)
               }
+        MultiplyToTensor tgt src ->
+          lift $ modify $ \old ->
+            old
+              { tensors =
+                  M.insert
+                    (tensorLocation tgt)
+                    ( zipR
+                        (*)
+                        (fromJust $ M.lookup (tensorLocation tgt) (tensors old))
+                        (fromJust $ M.lookup (tensorLocation src) (tensors old))
+                    )
+                    (tensors old)
+              }
         Return src -> do
           old <- lift get
           throwE $ fromJust $ M.lookup (tensorLocation src) (tensors old)
