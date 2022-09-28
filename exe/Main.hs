@@ -1,13 +1,23 @@
 module Main where
 
-import HTensorizer
+import Data.Foldable
+import HTensorizer.TensorProgram
+import HTensorizer.TensorProgramOptimizations
+import HTensorizer.Test
+import HTensorizer.Types
 
 main :: IO ()
 main = do
   let prg = toTensorProgram prog
   putStrLn $ nicePrint prg
+  putStrLn $ show $ validCheck prg
   putStrLn "--- After optimization ---"
   putStrLn $ nicePrint (optimize prg)
+  putStrLn $ show $ validCheck (optimize prg)
+  progs <- sample' (arbitrary :: Gen TensorProgram)
+  for_ progs $ \prog -> do
+    putStrLn "--- Test program ---"
+    putStrLn $ nicePrint prog
   where
     prog :: TensorProgramI Tensor
     prog = do
