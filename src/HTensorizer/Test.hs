@@ -3,6 +3,7 @@
 module HTensorizer.Test (module Test.QuickCheck.Arbitrary, module Test.QuickCheck.Gen) where
 
 import Control.Monad
+import Control.Monad.Identity
 import Control.Monad.Trans
 import Control.Monad.Trans.State.Strict
 import Data.Foldable
@@ -27,7 +28,7 @@ data TestGenState = TestGenState
 testGenState :: [(NumericType, Word32)] -> TestGenState
 testGenState types' =
   TestGenState
-    { testTensorLocations = M.fromList $ zip (fmap TensorLocation [0 ..]) (fmap (\(x, y) -> (x, fromIntegral y)) types),
+    { testTensorLocations = M.fromList $ zip (fmap TensorLocation [0 ..]) (fmap (\(x, y) -> (x, fromIntegral y `mod` 10000)) types),
       createdTensors = S.empty,
       uninitTensors = S.empty
     }
@@ -43,6 +44,39 @@ replicateList [] _ = []
 
 -- Generates valid programs only
 instance Arbitrary TensorProgram where
+  shrink Nop = []
+  shrink prg =
+    let lst = programToList prg
+        len = length lst
+        -- Try removing tensors and removing all instructions related to them
+        tensors_in_prg = tensorLocationsInProgram prg
+        prg_candidates =
+          catMaybes $
+            fmap
+              ( \remove_tensor ->
+                  let new_prg = runIdentity $ traverseFilterForwards prg $ \piece ->
+                        let locs = tensorLocationsInProgram piece
+                         in if S.null (S.intersection locs (S.singleton remove_tensor))
+                              then return piece
+                              else return Nop
+                   in if validCheckPassed (validCheck new_prg)
+                        then Just new_prg
+                        else Nothing
+              )
+              (S.toList tensors_in_prg)
+        -- Try cutting program in half and see if any of them are valid
+        half1 = mconcat $ take (len `div` 2) lst
+        half2 = mconcat $ drop (len `div` 2) lst
+     in prg_candidates
+          <> ( if validCheckPassed (validCheck half1)
+                 then [half1]
+                 else []
+             )
+          <> ( if validCheckPassed (validCheck half2)
+                 then [half2]
+                 else []
+             )
+
   arbitrary = do
     -- Generate tensors that might exist in the program
     tensor_shapes <- arbitrary :: Gen [(NumericType, Word32)]

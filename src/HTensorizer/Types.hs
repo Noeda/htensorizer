@@ -1,5 +1,7 @@
+{-# LANGUAGE DeriveAnyClass #-}
 {-# LANGUAGE DeriveDataTypeable #-}
 {-# LANGUAGE DeriveGeneric #-}
+{-# LANGUAGE DerivingStrategies #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 
 -- NEXT STEPS:
@@ -22,12 +24,15 @@ module HTensorizer.Types
     TensorLocation (..),
     Tensor (..),
     NumericType (..),
+    tensorType,
+    tensorSize,
     tensorLocation,
     areTensorsCompatible,
   )
 where
 
 import Control.Applicative
+import Control.DeepSeq
 import Control.Monad.Identity
 import Control.Monad.Trans
 import Control.Monad.Trans.State.Strict
@@ -38,13 +43,20 @@ import GHC.Generics
 
 -- Remember to update HTensorizer.Test with new types if you add any
 data NumericType = Float32
-  deriving (Eq, Ord, Show, Read, Typeable, Data, Generic)
+  deriving (Eq, Ord, Show, Read, Typeable, Data, Generic, NFData)
 
 newtype TensorLocation = TensorLocation Int
   deriving (Eq, Ord, Show, Read, Typeable, Data, Generic)
+  deriving anyclass (NFData)
 
 data Tensor = Tensor !NumericType !Int !TensorLocation
-  deriving (Eq, Ord, Show, Read, Typeable, Data, Generic)
+  deriving (Eq, Ord, Show, Read, Typeable, Data, Generic, NFData)
+
+tensorType :: Tensor -> NumericType
+tensorType (Tensor tp _ _) = tp
+
+tensorSize :: Tensor -> Int
+tensorSize (Tensor _ sz _) = sz
 
 tensorLocation :: Tensor -> TensorLocation
 tensorLocation (Tensor _ _ loc) = loc
@@ -86,7 +98,7 @@ data TensorProgramBuilder = TensorProgramBuilder
 type TensorProgramI = TensorProgramT Identity
 
 newtype TensorProgramT m a = TensorProgramT {unwrapTensorProgramT :: StateT TensorProgramBuilder m a}
-  deriving (Functor, Monad, Applicative)
+  deriving newtype (Functor, Monad, Applicative)
 
 instance MonadTrans TensorProgramT where
   {-# INLINE lift #-}

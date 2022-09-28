@@ -17,7 +17,15 @@ optimize prg =
         else optimized
   where
     optimizationRound prg =
-      removeUnnecessaryConstants $ constantFold $ removeZeroAdds $ removeUnnecessaryDupes $ removeUnusedCode prg
+      removeUnnecessaryConstants $ constantFold $ removeZeroAdds $ removeUnnecessaryDupes $ removeUnnecessaryWrites $ removeUnusedCode prg
+
+double2Float :: Double -> Float
+double2Float dbl = realToFrac dbl
+
+float2Double :: Float -> Double
+float2Double flt = realToFrac flt
+
+-- Bug in removeUnnecessaryDupes revealed in tests
 
 -- Constant folds
 --
@@ -56,7 +64,7 @@ constantFold prg =
               return $ MakeTensorConstant tgt constant
         AddToTensor tgt src -> case (M.lookup (tensorLocation tgt) constants, M.lookup (tensorLocation src) constants) of
           (Just tgt_cons, Just src_cons) -> do
-            let summed = tgt_cons + src_cons
+            let summed = float2Double $ double2Float tgt_cons + double2Float src_cons
             put $ M.insert (tensorLocation tgt) summed constants
             return $ MakeTensorConstant tgt summed
           (Just _, Nothing) -> do
@@ -168,6 +176,8 @@ removeUnnecessaryConstants prg =
 -- If we see a dupe, then we record "tensor a was duped from b"
 -- If there's no operations on b again, then we rewrite 'a' to be 'b' and
 -- remove the dupe instruction.
+--
+-- This optimization depends on unneeded operations being removed first.
 removeUnnecessaryDupes :: TensorProgram -> TensorProgram
 removeUnnecessaryDupes prg =
   let rewritables = execState go M.empty
@@ -184,7 +194,7 @@ removeUnnecessaryDupes prg =
     go = do
       traverseFilterForwards prg $ \piece -> do
         case piece of
-          Seq _ _ -> return piece
+          Seq _ _ -> error "impossible"
           any_piece -> do
             let ops = S.union (tensorProgramReads any_piece) (tensorProgramWrites any_piece)
             dupes <- get
@@ -211,6 +221,39 @@ removeSelfDupes prg = runIdentity $ traverseFilterForwards prg $ \piece -> do
     Dupe src1 src2 | tensorLocation src1 == tensorLocation src2 -> return Nop
     _ -> return piece
 
+-- Removes write operations that get overwritten.
+--
+-- e.g.
+--
+-- a <- uninit   (uninit is considered a write)
+-- a <- dupe b
+--
+-- The uninit can be removed.
+removeUnnecessaryWrites :: TensorProgram -> TensorProgram
+removeUnnecessaryWrites prg =
+  flip evalState S.empty $ do
+    traverseFilterBackwards prg $ \piece -> do
+      marked <- get
+      case piece of
+        Seq _ _ -> error "impossible"
+        piece -> do
+          let reads = tensorProgramReads piece
+              writes = tensorProgramWrites piece
+          -- If all writable tensors are marked (i.e. they are written in a
+          -- future instruction and not read before that), then remove the
+          -- instruction
+          if not (S.null writes) && all (\write -> S.member write marked) writes
+            then return Nop
+            else do
+              for_ (S.union reads writes) $ \tensor -> do
+                when (tensor `S.notMember` reads && tensor `S.member` writes) $
+                  modify $
+                    S.insert tensor
+                when (tensor `S.member` reads) $
+                  modify $
+                    S.delete tensor
+              return piece
+
 -- Removes operations on tensors that are not contributing to the final result.
 --
 -- The algorithm starts from the end and goes backwards. It marks all tensors
@@ -228,7 +271,7 @@ removeUnusedCode prg =
       -- this.
       marked <- get
       case piece of
-        Seq _ _ -> return piece
+        Seq _ _ -> error "impossible"
         Return tensor -> do
           put $ S.insert (tensorLocation tensor) marked
           return piece

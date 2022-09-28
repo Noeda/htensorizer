@@ -8,14 +8,17 @@ extra-source-files: CHANGELOG.md
 library
     exposed-modules:  HTensorizer.TensorProgram
                       HTensorizer.TensorProgramOptimizations
+                      HTensorizer.HaskellInterpreter
                       HTensorizer.Test
                       HTensorizer.Types
     hs-source-dirs:   src
     build-depends:    base >=4.9 && <5.0,
                       containers,
+                      deepseq,
                       mtl,
                       QuickCheck,
-                      transformers
+                      transformers,
+                      vector
     ghc-options:      -Wall -fno-warn-name-shadowing
     default-language: Haskell2010
 
@@ -23,6 +26,7 @@ test-suite htensorizer-test
     type:             exitcode-stdio-1.0
     main-is:          Main.hs
     build-depends:    base >=4.9 && <5.0,
+                      deepseq,
                       hspec,
                       htensorizer,
                       QuickCheck

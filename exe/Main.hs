@@ -18,6 +18,8 @@ main = do
   for_ progs $ \prog -> do
     putStrLn "--- Test program ---"
     putStrLn $ nicePrint prog
+    putStrLn "--- optimized ---"
+    putStrLn $ nicePrint (optimize prog)
   where
     prog :: TensorProgramI Tensor
     prog = do

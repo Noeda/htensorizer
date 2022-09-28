@@ -7,6 +7,10 @@ module HTensorizer.TensorProgram
     toTensorProgramM,
     emitInstruction,
     nicePrint,
+    foldForwards,
+    foldBackwards,
+    programToList,
+    tensorLocationsInProgram,
     traverseFilterForwards,
     traverseFilterBackwards,
     traverseTensorLocation,
@@ -122,6 +126,18 @@ nicePrint prg = execWriter $ go prg
       tellTensor tensor
       tell ")"
 
+programToList :: TensorProgram -> [TensorProgram]
+programToList prg =
+  execState go []
+  where
+    go = foldBackwards prg $ \piece -> modify $ \old -> piece : old
+
+foldBackwards :: Applicative f => TensorProgram -> (TensorProgram -> f ()) -> f ()
+foldBackwards prg action = go prg
+  where
+    go (Seq x1 x2) = go x2 *> go x1
+    go thing = action thing
+
 foldForwards :: Applicative f => TensorProgram -> (TensorProgram -> f ()) -> f ()
 foldForwards prg action = go prg
   where
@@ -161,13 +177,21 @@ tensorProgramReads :: TensorProgram -> S.Set TensorLocation
 tensorProgramReads Nop = S.empty
 tensorProgramReads (Return tens) = S.singleton (tensorLocation tens)
 tensorProgramReads (Dupe _ src) = S.singleton (tensorLocation src)
-tensorProgramReads (AddToTensor _ src) = S.singleton (tensorLocation src)
+tensorProgramReads (AddToTensor tgt src) = S.fromList [tensorLocation src, tensorLocation tgt]
 tensorProgramReads (Seq r1 r2) = S.union (tensorProgramReads r1) (tensorProgramReads r2)
 tensorProgramReads (MakeTensorUninit _) = S.empty
 tensorProgramReads (MakeTensorConstant _ _) = S.empty
 
 traverseTensorLocation :: Applicative f => Tensor -> (TensorLocation -> f TensorLocation) -> f Tensor
 traverseTensorLocation (Tensor dtype sz loc) action = Tensor dtype sz <$> action loc
+
+tensorLocationsInProgram :: TensorProgram -> S.Set TensorLocation
+tensorLocationsInProgram prg =
+  execState go S.empty
+  where
+    go = traverseTensorLocations prg $ \loc -> do
+      modify $ S.insert loc
+      return loc
 
 traverseTensorLocations :: Applicative f => TensorProgram -> (TensorLocation -> f TensorLocation) -> f TensorProgram
 traverseTensorLocations Nop _ = pure Nop
@@ -188,7 +212,7 @@ data ValidCheckResult = ValidCheckResult
   }
   deriving (Eq, Ord, Show, Read, Typeable, Data, Generic)
 
-data ValidationError = ValidationError !ValidationErrorType !TensorProgram
+data ValidationError = ValidationError !ValidationErrorType !(Maybe TensorProgram)
   deriving (Eq, Ord, Show, Read, Typeable, Data, Generic)
 
 data ValidationErrorType
@@ -197,6 +221,7 @@ data ValidationErrorType
   | IncompatibleTargetAndSourceTensors
   | IncompatibleSizes
   | SourceTensorUninitialized
+  | NoReturn
   deriving (Eq, Ord, Show, Read, Typeable, Data, Generic)
 
 emptyValidCheckResult :: ValidCheckResult
@@ -222,27 +247,38 @@ whenJustM Nothing _ = return ()
 validCheck :: TensorProgram -> ValidCheckResult
 validCheck prg = execState go emptyValidCheckResult
   where
-    go = foldForwards prg $ \piece ->
-      case piece of
-        Seq _ _ -> error "impossible"
-        MakeTensorConstant tensor _ ->
-          typeCheckCreateTensor piece tensor
-        MakeTensorUninit tensor -> do
-          typeCheckCreateTensor piece tensor
-          markTensorUninit tensor
-        Dupe tgt src -> do
-          typeCheckCreateTensor piece tgt
-          typeCheckBinOpTensor piece tgt src
-        AddToTensor tgt src ->
-          typeCheckBinOpTensor piece tgt src
-        Return src ->
-          typeCheckReturnTensor piece src
-        Nop -> pure ()
+    go = do
+      foldForwards prg $ \piece ->
+        case piece of
+          Seq _ _ -> error "impossible"
+          MakeTensorConstant tensor _ ->
+            typeCheckCreateTensor piece tensor
+          MakeTensorUninit tensor -> do
+            typeCheckCreateTensor piece tensor
+            markTensorUninit tensor
+          Dupe tgt src -> do
+            typeCheckCreateTensor piece tgt
+            typeCheckBinOpTensor piece tgt src
+          AddToTensor tgt src ->
+            typeCheckBinOpTensor piece tgt src
+          Return src ->
+            typeCheckReturnTensor piece src
+          Nop -> pure ()
+      ret_node <- returnTensor <$> get
+      when (isNothing ret_node) $
+        emitValidCheckError' NoReturn
+
+    emitValidCheckError' error_type =
+      modify $ \old ->
+        old
+          { validationErrors = validationErrors old SQ.|> ValidationError error_type Nothing,
+            validCheckPassed = False
+          }
 
     emitValidCheckError piece error_type =
       modify $ \old ->
         old
-          { validationErrors = validationErrors old SQ.|> ValidationError error_type piece,
+          { validationErrors = validationErrors old SQ.|> ValidationError error_type (Just piece),
             validCheckPassed = False
           }
 
