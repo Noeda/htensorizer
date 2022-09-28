@@ -3,7 +3,7 @@
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE RankNTypes #-}
 
-module HTensorizer.HaskellInterpreter (run) where
+module HTensorizer.HaskellInterpreter (run, TensorProgramResult (..)) where
 
 import Control.DeepSeq
 import Control.Monad.Trans

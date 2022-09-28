@@ -20,6 +20,7 @@ module HTensorizer.TensorProgram
     ValidCheckResult (..),
     validCheck,
     add,
+    mult,
     dupe,
     uninit,
     zeros,
@@ -85,6 +86,10 @@ uninit dtype sz = do
 add :: Monad m => Tensor -> Tensor -> TensorProgramT m ()
 add dst_tensor src_tensor = do
   emitInstruction $ AddToTensor dst_tensor src_tensor
+
+mult :: Monad m => Tensor -> Tensor -> TensorProgramT m ()
+mult dst_tensor src_tensor = do
+  emitInstruction $ MultiplyToTensor dst_tensor src_tensor
 
 dupe :: Monad m => Tensor -> TensorProgramT m Tensor
 dupe src_tensor@(Tensor dtype sz _) = do
