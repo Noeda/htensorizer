@@ -25,8 +25,6 @@ double2Float dbl = realToFrac dbl
 float2Double :: Float -> Double
 float2Double flt = realToFrac flt
 
--- Bug in removeUnnecessaryDupes revealed in tests
-
 -- Constant folds
 --
 -- This turns code like:

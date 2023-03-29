@@ -29,6 +29,19 @@ data InterpreterState = InterpreterState
 zipR :: (forall a. Num a => a -> a -> a) -> TensorProgramResult -> TensorProgramResult -> TensorProgramResult
 zipR action (Float32Result vec1) (Float32Result vec2) = Float32Result $ V.zipWith action vec1 vec2
 
+interpretMatMult :: TensorProgramResult -> TensorProgramResult -> Int -> Int -> Int -> Int -> TensorProgramResult
+interpretMatMult (Float32Result src1) (Float32Result src2) rows1 cols1 _rows2 cols2 = Float32Result $
+  V.generate tgt_sz $ \idx ->
+    let row = idx `div` tgt_cols
+        col = idx `mod` tgt_cols
+     in V.sum $ V.generate cols1 $ \i ->
+          let src1_idx = row * cols1 + i
+              src2_idx = i * cols2 + col
+           in src1 V.! src1_idx * src2 V.! src2_idx
+ where
+  tgt_cols = cols2
+  tgt_sz = rows1 * cols2
+
 double2Float :: Double -> Float
 double2Float = fromRational . toRational
 
@@ -38,6 +51,12 @@ emptyInterpreterState = InterpreterState {tensors = M.empty}
 makeConstant :: Tensor -> Double -> TensorProgramResult
 makeConstant tensor cons = case tensorType tensor of
   Float32 -> Float32Result $ V.replicate (tensorSize tensor) (double2Float cons)
+
+makeEye :: Tensor -> Int -> TensorProgramResult
+makeEye tensor sz = Float32Result $ V.generate (tensorSize tensor) $ \idx ->
+  let row = idx `div` sz
+      col = idx `mod` sz
+   in if row == col then 1 else 0
 
 run :: TensorProgram -> TensorProgramResult
 run program =
@@ -54,6 +73,8 @@ run program =
           lift $ modify $ \old -> old {tensors = M.insert (tensorLocation tensor) (makeConstant tensor (0.0 / 0.0)) (tensors old)}
         MakeTensorConstant tensor cons ->
           lift $ modify $ \old -> old {tensors = M.insert (tensorLocation tensor) (makeConstant tensor cons) (tensors old)}
+        MakeTensorEye tensor sz ->
+          lift $ modify $ \old -> old {tensors = M.insert (tensorLocation tensor) (makeEye tensor sz) (tensors old)}
         Dupe tgt src ->
           lift $ modify $ \old -> old {tensors = M.insert (tensorLocation tgt) (fromJust $ M.lookup (tensorLocation src) (tensors old)) (tensors old)}
         AddToTensor tgt src ->
@@ -82,6 +103,17 @@ run program =
                     )
                     (tensors old)
               }
+        MatrixMultiplyToTensor tgt src1 src2 (Shape2D rows1 cols1) (Shape2D rows2 cols2) ->
+          lift $ modify $ \old ->
+            old
+              { tensors =
+                  M.insert
+                    (tensorLocation tgt)
+                    (interpretMatMult (fromJust $ M.lookup (tensorLocation src1) (tensors old))
+                                      (fromJust $ M.lookup (tensorLocation src2) (tensors old))
+                                      rows1 cols1
+                                      rows2 cols2)
+                    (tensors old) }
         Return src -> do
           old <- lift get
           throwE $ fromJust $ M.lookup (tensorLocation src) (tensors old)

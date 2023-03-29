@@ -129,6 +129,8 @@ instance Arbitrary TensorProgram where
         let instruction_op = instruction_op_ `mod` 5
         src_tensor_idx <- arbw32
 
+        -- TODO: add matrix multiplication
+
         case instruction_op of
           0 -> do
             -- constant

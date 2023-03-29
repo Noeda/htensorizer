@@ -21,6 +21,8 @@ module HTensorizer.TensorProgram
     validCheck,
     add,
     mult,
+    matMult,
+    eye,
     dupe,
     uninit,
     zeros,
@@ -91,6 +93,18 @@ mult :: Monad m => Tensor -> Tensor -> TensorProgramT m ()
 mult dst_tensor src_tensor = do
   emitInstruction $ MultiplyToTensor dst_tensor src_tensor
 
+matMult :: Monad m => Tensor -> Tensor -> Tensor -> Shape2D -> Shape2D -> TensorProgramT m ()
+matMult tgt src1 src2 shape1 shape2 =
+  emitInstruction $ MatrixMultiplyToTensor tgt src1 src2 shape1 shape2
+
+-- Creates the identity matrix of NxN size
+eye :: Monad m => NumericType -> Int -> TensorProgramT m Tensor
+eye dtype sz = do
+  loc <- newTensorLocation
+  let tens = Tensor dtype (sz*sz) loc
+  emitInstruction $ MakeTensorEye tens sz
+  return tens
+
 dupe :: Monad m => Tensor -> TensorProgramT m Tensor
 dupe src_tensor@(Tensor dtype sz _) = do
   new_loc <- newTensorLocation
@@ -103,6 +117,8 @@ nicePrint prg = execWriter $ go prg
   where
     tellTensor (Tensor dtype sz (TensorLocation loc)) =
       tell $ "@" <> show loc <> " : " <> show dtype <> " " <> show sz
+
+    showShape (Shape2D rows cols) = show rows <> "x" <> show cols
 
     go (Seq prog1 prog2) = go prog1 >> go prog2
     go Nop = tell "nop\n"
@@ -132,6 +148,18 @@ nicePrint prg = execWriter $ go prg
       tell "("
       tellTensor tensor
       tell ") <- uninit\n"
+    go (MatrixMultiplyToTensor tgt src1 src2 shape1 shape2) = do
+      tell "matmult ("
+      tellTensor tgt
+      tell ") <- ("
+      tellTensor src1
+      tell ") * ("
+      tellTensor src2
+      tell $ ") " <> showShape shape1 <> " " <> showShape shape2 <> "\n"
+    go (MakeTensorEye tensor sz) = do
+      tell "("
+      tellTensor tensor
+      tell $ ") <- eye " <> show sz <> "x" <> show sz <> "\n"
     go (Return tensor) = do
       tell "return ("
       tellTensor tensor
@@ -182,6 +210,8 @@ tensorProgramWrites (MultiplyToTensor tgt _) = S.singleton (tensorLocation tgt)
 tensorProgramWrites (Seq r1 r2) = S.union (tensorProgramWrites r1) (tensorProgramWrites r2)
 tensorProgramWrites (MakeTensorUninit tens) = S.singleton (tensorLocation tens)
 tensorProgramWrites (MakeTensorConstant tens _) = S.singleton (tensorLocation tens)
+tensorProgramWrites (MakeTensorEye tens _) = S.singleton (tensorLocation tens)
+tensorProgramWrites (MatrixMultiplyToTensor tgt _ _ _ _) = S.singleton (tensorLocation tgt)
 tensorProgramWrites (Return _) = S.empty
 
 -- Returns all tensor locations that are read from by the program
@@ -192,6 +222,8 @@ tensorProgramReads (Dupe _ src) = S.singleton (tensorLocation src)
 tensorProgramReads (AddToTensor tgt src) = S.fromList [tensorLocation src, tensorLocation tgt]
 tensorProgramReads (MultiplyToTensor tgt src) = S.fromList [tensorLocation src, tensorLocation tgt]
 tensorProgramReads (Seq r1 r2) = S.union (tensorProgramReads r1) (tensorProgramReads r2)
+tensorProgramReads (MatrixMultiplyToTensor _ src1 src2 _ _) = S.fromList [tensorLocation src1, tensorLocation src2]
+tensorProgramReads (MakeTensorEye _ _) = S.empty
 tensorProgramReads (MakeTensorUninit _) = S.empty
 tensorProgramReads (MakeTensorConstant _ _) = S.empty
 
@@ -212,6 +244,9 @@ traverseTensorLocations (Dupe tgt src) action =
   Dupe <$> traverseTensorLocation tgt action <*> traverseTensorLocation src action
 traverseTensorLocations (MakeTensorConstant tens cons) action = MakeTensorConstant <$> traverseTensorLocation tens action <*> pure cons
 traverseTensorLocations (MakeTensorUninit tens) action = MakeTensorUninit <$> traverseTensorLocation tens action
+traverseTensorLocations (MakeTensorEye tens sz) action = MakeTensorEye <$> traverseTensorLocation tens action <*> pure sz
+traverseTensorLocations (MatrixMultiplyToTensor tgt src1 src2 shape1 shape2) action =
+  MatrixMultiplyToTensor <$> traverseTensorLocation tgt action <*> traverseTensorLocation src1 action <*> traverseTensorLocation src2 action <*> pure shape1 <*> pure shape2
 traverseTensorLocations (AddToTensor tgt src) action = AddToTensor <$> traverseTensorLocation tgt action <*> traverseTensorLocation src action
 traverseTensorLocations (MultiplyToTensor tgt src) action = MultiplyToTensor <$> traverseTensorLocation tgt action <*> traverseTensorLocation src action
 traverseTensorLocations (Seq r1 r2) action = Seq <$> traverseTensorLocations r1 action <*> traverseTensorLocations r2 action
@@ -258,6 +293,8 @@ whenJustM Nothing _ = return ()
 --
 -- 1. do not operate on uninitialized data
 -- 2. all operations take compatible tensor sizes and types
+--     2a. operations like basic +, -, * etc. have same shape tensors
+--     2b. matrix multiplication result has correct size
 validCheck :: TensorProgram -> ValidCheckResult
 validCheck prg = execState go emptyValidCheckResult
   where
@@ -277,6 +314,12 @@ validCheck prg = execState go emptyValidCheckResult
             typeCheckBinOpTensor piece tgt src
           MultiplyToTensor tgt src ->
             typeCheckBinOpTensor piece tgt src
+          MatrixMultiplyToTensor tgt src1 src2 shape1 shape2 ->
+            typeCheckMatrixMultiply piece tgt src1 src2 shape1 shape2
+          MakeTensorEye tgt sz -> do
+            when (tensorSize tgt /= sz*sz) $
+              emitValidCheckError piece IncompatibleSizes
+            typeCheckCreateTensor piece tgt
           Return src ->
             typeCheckReturnTensor piece src
           Nop -> pure ()
@@ -303,6 +346,42 @@ validCheck prg = execState go emptyValidCheckResult
 
     markTensorInit tensor = do
       modify $ \old -> old {uninitTensors = S.delete (tensorLocation tensor) (uninitTensors old)}
+
+    typeCheckMatrixMultiply piece tgt src1 src2 (Shape2D rows1 cols1) (Shape2D rows2 cols2) = do
+      -- Check that the shapes of all involved matrices are valid
+      when (cols1 /= rows2) $
+        emitValidCheckError piece $ IncompatibleSizes
+      let tgt_sz = tensorSize tgt
+          tgt_shape = Shape2D rows1 cols2
+      when (tgt_sz /= shapeSize tgt_shape) $
+        emitValidCheckError piece $ IncompatibleSizes
+
+      -- check that all the tensors exist
+      tgt_old_type <- M.lookup (tensorLocation tgt) . tensorTypes <$> get
+      src1_old_type <- M.lookup (tensorLocation src1) . tensorTypes <$> get
+      src2_old_type <- M.lookup (tensorLocation src2) . tensorTypes <$> get
+      when (isNothing tgt_old_type) $
+        emitValidCheckError piece TargetTensorDoesNotExist
+      when (isNothing src1_old_type) $
+        emitValidCheckError piece SourceTensorDoesNotExist
+      when (isNothing src2_old_type) $
+        emitValidCheckError piece SourceTensorDoesNotExist
+
+      -- source tensors must not be uninitialized
+      src1_uninit <- S.member (tensorLocation src1) . uninitTensors <$> get
+      src2_uninit <- S.member (tensorLocation src2) . uninitTensors <$> get
+      when (src1_uninit || src2_uninit) $
+        emitValidCheckError piece SourceTensorUninitialized
+
+      markTensorInit tgt
+
+      let tgt_type = tensorType tgt
+          src1_type = tensorType src1
+          src2_type = tensorType src2
+
+      -- types must all be compatible
+      when (tgt_type /= src1_type || tgt_type /= src2_type) $
+        emitValidCheckError piece IncompatibleTargetAndSourceTensors
 
     typeCheckCreateTensor piece tensor = do
       old_type <- M.lookup (tensorLocation tensor) . tensorTypes <$> get
