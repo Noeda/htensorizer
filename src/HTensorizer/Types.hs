@@ -27,6 +27,9 @@ module HTensorizer.Types
     Shape2D(..),
     shape2D,
     shapeSize,
+    Rectangle(..),
+    rect,
+    rectSize,
     tensorType,
     tensorSize,
     tensorLocation,
@@ -90,6 +93,9 @@ data TensorProgram
   -- MatrixMultiplyToTensor: tgt =   src  *   src2   shape    shape2
   -- tgt assumed to have the shape of src * src2
   | MatrixMultiplyToTensor !Tensor !Tensor !Tensor !Shape2D !Shape2D
+  | MatrixTransposeToTensor !Tensor !Tensor !Shape2D
+  -- Writes a certain scalar to a tensor of a shape in given rectangle.
+  | WriteRectangleToTensor !Tensor !Shape2D !Double !Rectangle
   | Seq TensorProgram TensorProgram
   | Return !Tensor
   | Nop
@@ -97,6 +103,20 @@ data TensorProgram
 
 data Shape2D = Shape2D { rows :: !Int, cols :: !Int }
   deriving (Eq, Ord, Show, Read, Typeable, Data, Generic, NFData)
+
+data Rectangle = Rectangle
+  { rrow :: !Int
+  , rcol :: !Int
+  , rh :: !Int
+  , rw :: !Int
+  }
+  deriving (Eq, Ord, Show, Read, Typeable, Data, Generic, NFData)
+
+rect :: Int -> Int -> Int -> Int -> Rectangle
+rect = Rectangle
+
+rectSize :: Rectangle -> Int
+rectSize (Rectangle _ _ h w) = h * w
 
 shape2D :: Int -> Int -> Shape2D
 shape2D = Shape2D

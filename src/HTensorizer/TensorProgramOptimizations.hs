@@ -135,6 +135,7 @@ removeZeroAdds prg =
 -- a <- dupe b
 removeUnnecessaryConstants :: TensorProgram -> TensorProgram
 removeUnnecessaryConstants prg =
+  -- State is the set of tensors that have been overwritten.
   evalState (traverseFilterBackwards prg go) S.empty
   where
     go piece = case piece of

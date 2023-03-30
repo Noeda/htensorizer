@@ -42,6 +42,27 @@ interpretMatMult (Float32Result src1) (Float32Result src2) rows1 cols1 _rows2 co
   tgt_cols = cols2
   tgt_sz = rows1 * cols2
 
+interpretTranspose :: TensorProgramResult -> Int -> Int -> TensorProgramResult
+interpretTranspose (Float32Result src) src_rows src_cols = Float32Result $
+  V.generate (tgt_rows * tgt_cols) $ \idx ->
+    let tgt_row = idx `div` tgt_cols
+        tgt_col = idx `mod` tgt_cols
+        src_row = tgt_col
+        src_col = tgt_row
+     in src V.! (src_row * src_cols + src_col)
+ where
+  tgt_rows = src_cols
+  tgt_cols = src_rows
+
+interpretWriteRectangle :: TensorProgramResult -> Shape2D -> Double -> Rectangle -> TensorProgramResult
+interpretWriteRectangle (Float32Result tgt) (Shape2D tgt_rows tgt_cols) scalar (Rectangle rrow rcol rh rw) = Float32Result $
+  V.generate (tgt_rows * tgt_cols) $ \idx ->
+    let row = idx `div` tgt_cols
+        col = idx `mod` tgt_cols
+     in if row >= rrow && row < rrow + rh && col >= rcol && col < rcol + rw
+          then double2Float scalar
+          else tgt V.! idx
+
 double2Float :: Double -> Float
 double2Float = fromRational . toRational
 
@@ -114,6 +135,22 @@ run program =
                                       rows1 cols1
                                       rows2 cols2)
                     (tensors old) }
+        MatrixTransposeToTensor tgt src (Shape2D rows cols) ->
+          lift $ modify $ \old ->
+            old
+              { tensors =
+                  M.insert
+                    (tensorLocation tgt)
+                    (interpretTranspose (fromJust $ M.lookup (tensorLocation src) (tensors old)) rows cols) (tensors old) }
+        WriteRectangleToTensor tgt tgt_shape scalar rect ->
+          lift $ modify $ \old ->
+            old
+              { tensors =
+                  M.insert
+                    (tensorLocation tgt)
+                    (interpretWriteRectangle (fromJust $ M.lookup (tensorLocation tgt) (tensors old)) tgt_shape scalar rect)
+                    (tensors old)
+                    }
         Return src -> do
           old <- lift get
           throwE $ fromJust $ M.lookup (tensorLocation src) (tensors old)
